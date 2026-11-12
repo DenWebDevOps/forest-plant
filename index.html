@@ -53,9 +53,18 @@
   .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
   .note { width: 100%; padding: 13px 14px; border: 0; background: transparent; color: var(--text); font: inherit; }
   .note::placeholder { color: var(--hint); }
-  #send { display: none; width: 100%; margin-top: 22px; padding: 15px; border: 0; border-radius: 12px;
+  .ago { padding: 4px 16px 14px; }
+  .ago[hidden] { display: none; }
+  .ago .agoval { text-align: center; font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .ago .agoval small { display: block; font-size: 12px; font-weight: 400; color: var(--hint); }
+  .ago input[type=range] { margin-top: 10px; }
+  .bar { position: sticky; bottom: 0; padding: 14px 0 calc(14px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, var(--bg) 70%, transparent); margin-top: 8px; }
+  #send { display: block; width: 100%; padding: 15px; border: 0; border-radius: 12px; cursor: pointer;
     background: var(--accent); color: var(--accent-text); font-family: inherit; font-size: 17px; font-weight: 600; }
-  .outside { color: var(--hint); font-size: 13px; text-align: center; margin-top: 10px; display: none; }
+  #send:disabled { opacity: .45; cursor: default; }
+  #send:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .outside { color: var(--hint); font-size: 13px; text-align: center; margin: 8px 0 0; display: none; }
 </style>
 </head>
 <body>
@@ -70,14 +79,26 @@
     <div class="scale"><span>5 min</span><span>2 h</span><span>10 h</span></div>
   </div>
 
-  <h2 id="whenLabel">Finished · how long ago</h2>
-  <div class="card seg" id="when" role="radiogroup" aria-labelledby="whenLabel"></div>
+  <h2 id="whenLabel">When</h2>
+  <div class="card">
+    <div class="seg" id="when" role="radiogroup" aria-labelledby="whenLabel">
+      <label><input type="radio" name="when" value="today" checked><span>Today</span></label>
+      <label><input type="radio" name="when" value="ago"><span>Hours ago</span></label>
+    </div>
+    <div class="ago" id="agoBox" hidden>
+      <div class="agoval" id="agoVal" aria-live="polite">2 h ago<small>finished at 18:30</small></div>
+      <input type="range" id="ago" min="1" max="48" step="1" value="4" aria-label="Finished how long ago">
+      <div class="scale"><span>30 min</span><span>12 h</span><span>24 h</span></div>
+    </div>
+  </div>
 
   <h2 id="noteLabel">Note</h2>
   <div class="card"><input class="note" id="note" maxlength="140" placeholder="optional" aria-labelledby="noteLabel"></div>
 
-  <button id="send" type="button">Plant</button>
-  <p class="outside" id="outside">Open this page from your Jarvis bot in Telegram to plant.</p>
+  <div class="bar">
+    <button id="send" type="button">Plant</button>
+    <p class="outside" id="outside">Open this page from your Jarvis bot in Telegram to plant.</p>
+  </div>
 </main>
 <script>
 // The activities are his Forest-app tags; each grows the tree type he gave that tag on the phone.
@@ -92,34 +113,34 @@ const ACTIVITIES = [
   {tag: "Routine", species: "bush", tree: "bush", leaf: "#5FD068"},
   {tag: "", species: "tangerine", tree: "tangerine", leaf: "#43B66E", accent: "#FF9F1C", label: "No tag"},
 ];
-const WHEN = [[0, "Now"], [30, "30 min"], [60, "1 h"], [120, "2 h"], [180, "3 h"]];
 // slider positions -> minutes: 5-minute steps up to 2 h, then 15-minute steps up to 10 h
 const STEPS = [];
 for (let m = 5; m <= 120; m += 5) STEPS.push(m);
 for (let m = 135; m <= 600; m += 15) STEPS.push(m);
 
 const tg = window.Telegram && window.Telegram.WebApp;
-const inTelegram = !!(tg && tg.initData);
+// Opened from the bot's keyboard button, Telegram leaves initData empty, so look at the platform instead
+// (it is "unknown" in a plain browser). sendData only works inside Telegram.
+const inTelegram = !!(tg && typeof tg.sendData === "function" && tg.platform && tg.platform !== "unknown");
 const $ = (id) => document.getElementById(id);
 const store = {
   get(k, d) { try { const v = localStorage.getItem("plant." + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem("plant." + k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
 };
 const fmt = (m) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`);
+const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
 $("what").innerHTML = ACTIVITIES.map((a, i) => `
   <label class="opt"><input type="radio" name="what" value="${i}">
     <span class="dot" style="background:${a.leaf}">${a.accent ? `<i style="background:${a.accent}"></i>` : ""}</span>
     <span class="name"><b>${a.label || a.tag}</b><small>${a.tree}</small></span><span class="tick"></span></label>`).join("");
-$("when").innerHTML = WHEN.map(([ago, text]) =>
-  `<label><input type="radio" name="when" value="${ago}"><span>${text}</span></label>`).join("");
 
-const len = $("len");
+const len = $("len"), agoIn = $("ago");
 len.max = String(STEPS.length - 1);
+agoIn.value = String(store.get("ago", 4));  // half-hours: 1 = 30 min .. 48 = 24 h
 const lastTag = store.get("tag", "Work");
 const pick = Math.max(0, ACTIVITIES.findIndex((a) => a.tag === lastTag));
 document.querySelector(`input[name=what][value="${pick}"]`).checked = true;
-document.querySelector('input[name=when][value="0"]').checked = true;
 
 function minutesFor(i) { return store.get("min." + ACTIVITIES[i].tag, ACTIVITIES[i].tag === "Work" ? 180 : 60); }
 function setMinutes(m) {
@@ -128,46 +149,48 @@ function setMinutes(m) {
   len.value = String(best);
   render();
 }
+const mode = () => document.querySelector("input[name=when]:checked").value;
 const current = () => ({
   a: ACTIVITIES[Number(document.querySelector("input[name=what]:checked").value)],
   minutes: STEPS[Number(len.value)],
-  ago: Number(document.querySelector("input[name=when]:checked").value),
+  ago: mode() === "ago" ? Number(agoIn.value) * 30 : 0,  // "Today": it ends when it is sent
 });
 function render() {
   const c = current();
   $("readout").innerHTML = `${fmt(c.minutes)}<small>${c.a.label || c.a.tag} · ${c.a.tree}</small>`;
-  const label = `Plant ${c.a.tree} · ${fmt(c.minutes)}`;
-  if (inTelegram) tg.MainButton.setText(label);
-  $("send").textContent = label;
+  $("agoBox").hidden = mode() !== "ago";
+  if (mode() === "ago") {
+    const end = new Date(Date.now() - c.ago * 60000), today = new Date().toDateString() === end.toDateString();
+    $("agoVal").innerHTML = `${fmt(c.ago)} ago<small>finished ${today ? "today" : "yesterday"} at ${hhmm(end)}</small>`;
+  }
+  $("send").textContent = `Plant ${c.a.tree} · ${fmt(c.minutes)}`;
 }
 setMinutes(minutesFor(pick));
 
-$("what").addEventListener("change", (e) => {
-  if (inTelegram && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-  setMinutes(minutesFor(Number(e.target.value)));
-});
-$("when").addEventListener("change", render);
-len.addEventListener("input", () => {
-  if (inTelegram && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-  render();
-});
+const haptic = () => { if (inTelegram && tg.HapticFeedback) tg.HapticFeedback.selectionChanged(); };
+$("what").addEventListener("change", (e) => { haptic(); setMinutes(minutesFor(Number(e.target.value))); });
+$("when").addEventListener("change", () => { haptic(); render(); });
+len.addEventListener("input", () => { haptic(); render(); });
+agoIn.addEventListener("input", () => { haptic(); render(); });
 
 function send() {
+  if (!inTelegram) return;
   const c = current();
   const note = $("note").value.replace(/\s+/g, " ").trim().slice(0, 140);
   store.set("tag", c.a.tag);
   store.set("min." + c.a.tag, c.minutes);
-  // Telegram hands this to the bot as message.web_app_data; Jarvis checks every field again
+  store.set("ago", Number(agoIn.value));
+  $("send").disabled = true;
+  // Telegram hands this to the bot as message.web_app_data (and closes the page); Jarvis checks every field again
   tg.sendData(JSON.stringify({v: 1, tag: c.a.tag, species: c.a.species, minutes: c.minutes, ago: c.ago, note}));
 }
+$("send").addEventListener("click", send);
 
 if (inTelegram) {
   tg.ready();
   tg.expand();
-  tg.MainButton.onClick(send);
-  tg.MainButton.show();
-  render();
 } else {
+  $("send").disabled = true;
   $("outside").style.display = "block";
 }
 </script>
